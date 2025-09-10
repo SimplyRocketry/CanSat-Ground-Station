@@ -53,6 +53,7 @@
   <div id="controls">
     <button id="serialBtn">Connect Serial</button>
     <button id="bleBtn">Connect BLE</button>
+    <button id="disconnectBtn">Disconnect</button>
   </div>
   
   <div id="dataGrid">
@@ -67,9 +68,8 @@
   </div>
 
   <script>
-    let bleCharacteristic;
-    let serialPort;
-    let serialReader;
+    let bleDevice, bleCharacteristic;
+    let serialPort, serialReader;
 
     // Update dashboard with parsed telemetry
     function updateDashboard(line) {
@@ -82,7 +82,7 @@
         } else if (parts[3] == 1){
             document.getElementById("state").textContent = "Ascent";
         } else if (parts[3] == 2){
-            document.getElementById("state").textContent = "Falling under drouge";
+            document.getElementById("state").textContent = "Falling under drogue";
         } else if (parts[3] == 3){
             document.getElementById("state").textContent = "Falling under main";
         }
@@ -106,14 +106,16 @@
         serialReader = decoder.readable.getReader();
 
         alert("Serial connected!");
-        while (true) {
-          const { value, done } = await serialReader.read();
-          if (done) break;
-          if (value) {
-            const lines = value.split("\n");
-            lines.forEach(line => { if (line.trim().length > 0) updateDashboard(line); });
+        (async function readLoop() {
+          while (true) {
+            const { value, done } = await serialReader.read();
+            if (done) break;
+            if (value) {
+              const lines = value.split("\n");
+              lines.forEach(line => { if (line.trim().length > 0) updateDashboard(line); });
+            }
           }
-        }
+        })();
       } catch (err) {
         console.error("Serial connection failed", err);
       }
@@ -124,11 +126,11 @@
     // --------------------
     document.getElementById("bleBtn").addEventListener("click", async () => {
       try {
-        const device = await navigator.bluetooth.requestDevice({
-          filters: [{ namePrefix: "ESP32" }], // Adjust to your ESP32 name
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: "ESP32" }], // Adjust to your device name
           optionalServices: [0xFFE0]          // Replace with your UART service UUID
         });
-        const server = await device.gatt.connect();
+        const server = await bleDevice.gatt.connect();
         const service = await server.getPrimaryService(0xFFE0);
         bleCharacteristic = await service.getCharacteristic(0xFFE1);
 
@@ -141,6 +143,38 @@
         alert("BLE connected!");
       } catch (err) {
         console.error("BLE connection failed", err);
+      }
+    });
+
+    // --------------------
+    // Disconnect
+    // --------------------
+    document.getElementById("disconnectBtn").addEventListener("click", async () => {
+      try {
+        // Close serial if active
+        if (serialReader) {
+          await serialReader.cancel();
+          serialReader.releaseLock();
+          serialReader = null;
+        }
+        if (serialPort) {
+          await serialPort.close();
+          serialPort = null;
+        }
+
+        // Disconnect BLE if active
+        if (bleCharacteristic) {
+          await bleCharacteristic.stopNotifications();
+          bleCharacteristic = null;
+        }
+        if (bleDevice && bleDevice.gatt.connected) {
+          bleDevice.gatt.disconnect();
+          bleDevice = null;
+        }
+
+        alert("Disconnected!");
+      } catch (err) {
+        console.error("Disconnect failed", err);
       }
     });
   </script>
